@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bản đồ khách hàng</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; width: 100%; }
+    #searchBox {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: white;
+      padding: 6px;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    #searchBox input {
+      width: 250px;
+      padding: 4px;
+      font-size: 14px;
+    }
+    .contract-label {
+      background-color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #666;
+      font-weight: bold;
+      font-size: 13px;
+      white-space: nowrap;
+      pointer-events: none;
+      user-select: none;
+      transform: translate(15px, -10px);
+      box-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+      position: absolute;
+    }
+  </style>
+</head>
+<body>
+  <div id="searchBox">
+    <input type="text" id="searchInput" placeholder="Tìm theo mã HĐ hoặc địa chỉ...">
+  </div>
+  <div id="map"></div>
+
+  <script>
+    const DATA_URL = "https://script.google.com/macros/s/AKfycbwA7VH_IbTiYpNjXIUX-stMmOSLWiXqRZ4h7Fzc-xMJmVqUPIQn-B37PMkngLH_AOyc/exec";
+
+    const COLORS = ["blue", "red", "green", "yellow", "violet", "black", "grey"];
+    const COLOR_NAMES = {
+      blue: "Xanh dương", red: "Đỏ", green: "Xanh lá",
+      yellow: "Vàng", violet: "Tím", black: "Đen", grey: "Xám"
+    };
+
+    let map = L.map("map").setView([10.776, 106.7], 11);
+    let markers = [];
+    let currentLocationMarker = null;
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    const getIcon = (color = "blue") => L.icon({
+      iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-${color}.png`,
+      shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41],
+    });
+
+    const currentLocationIcon = L.icon({
+      iconUrl: "https://cdn-icons-png.flaticon.com/512/64/64113.png",
+      iconSize: [32, 32],
+      iconAnchor: [16, 32],
+      popupAnchor: [0, -32],
+    });
+
+    function getPopupContent(marker) {
+      const { name, address, lat, lng, image, color } = marker.customData;
+
+      const colorButtons = COLORS.map(c => `
+        <button onclick="applyColor('${c}', ${lat}, ${lng})"
+          style="background:${c}; width:20px; height:20px; border-radius:50%; border:1px solid #ccc; margin-right:4px;"
+          title="${COLOR_NAMES[c]}"></button>`).join("");
+
+      return `
+        <b>🆔 Mã HĐ: ${name || "Không có"}</b><br>
+        📍 ${address || "Không có"}<br>
+        🌐 ${lat.toFixed(5)}, ${lng.toFixed(5)}<br>
+        ${image ? `<img src="${image}" width="180"><br>` : ""}
+        <div style="margin-top:5px"><b>Chọn màu:</b><br>${colorButtons}</div>
+      `;
+    }
+
+    function findMarker(lat, lng) {
+      return markers.find(m => m.getLatLng().lat === lat && m.getLatLng().lng === lng);
+    }
+
+    function applyColor(color, lat, lng) {
+      const marker = findMarker(lat, lng);
+      if (marker) {
+        marker.setIcon(getIcon(color));
+        marker.customData.color = color;
+        marker.bindPopup(getPopupContent(marker)).openPopup();
+
+        // Cập nhật màu viền label
+        if (marker.contractLabel) {
+          marker.contractLabel.style.borderColor = color;
+        }
+      }
+    }
+
+    function addContractLabel(marker) {
+      const name = marker.customData.name || "";
+      const label = L.DomUtil.create("div", "contract-label");
+      label.innerText = name;
+
+      label.style.borderColor = marker.customData.color || "blue";
+      map.getPanes().overlayPane.appendChild(label);
+
+      function updateLabelPosition() {
+        const pos = map.latLngToLayerPoint(marker.getLatLng());
+        label.style.left = pos.x + 15 + "px";
+        label.style.top = pos.y - 10 + "px";
+      }
+
+      updateLabelPosition();
+      map.on("zoom move", updateLabelPosition);
+      marker.on("move", updateLabelPosition);
+
+      marker.contractLabel = label;
+    }
+
+    async function loadData() {
+      try {
+        const resp = await fetch(DATA_URL);
+        const data = await resp.json();
+
+        data.forEach(item => {
+          const lat = parseFloat(item.lat);
+          const lng = parseFloat(item.lng);
+          if (isNaN(lat) || isNaN(lng)) return;
+
+          const marker = L.marker([lat, lng], {
+            icon: getIcon("blue")
+          }).addTo(map);
+
+          marker.customData = {
+            name: item.name || "",
+            address: item.address || "",
+            lat, lng,
+            image: "",
+            color: "blue"
+          };
+
+          marker.bindPopup(getPopupContent(marker));
+          addContractLabel(marker);
+          markers.push(marker);
+        });
+      } catch (err) {
+        console.error("Lỗi khi tải dữ liệu:", err);
+      }
+    }
+
+    function setupSearch() {
+      const input = document.getElementById("searchInput");
+      input.addEventListener("input", () => {
+        const kw = input.value.toLowerCase().trim();
+        markers.forEach(m => {
+          const text = `${m.customData.name} ${m.customData.address}`.toLowerCase();
+          if (text.includes(kw)) {
+            m.addTo(map);
+            if (m.contractLabel) m.contractLabel.style.display = "block";
+          } else {
+            map.removeLayer(m);
+            if (m.contractLabel) m.contractLabel.style.display = "none";
+          }
+        });
+      });
+    }
+
+    function trackCurrentLocation() {
+      if (!navigator.geolocation) {
+        alert("Trình duyệt không hỗ trợ GPS.");
+        return;
+      }
+
+      navigator.geolocation.watchPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        if (!currentLocationMarker) {
+          currentLocationMarker = L.marker([lat, lng], {
+            icon: currentLocationIcon,
+            title: "Bạn đang ở đây"
+          }).addTo(map).bindPopup("Vị trí hiện tại");
+          map.setView([lat, lng], 14);
+        } else {
+          currentLocationMarker.setLatLng([lat, lng]);
+        }
+      }, err => {
+        console.warn("Lỗi GPS:", err.message);
+      }, {
+        enableHighAccuracy: true,
+        maximumAge: 3000,
+        timeout: 5000
+      });
+    }
+
+    window.onload = () => {
+      loadData().then(() => {
+        setupSearch();
+        trackCurrentLocation();
+      });
+    };
+  </script>
+</body>
+</html>
